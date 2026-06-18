@@ -64,7 +64,7 @@ async def start_bot2(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     
     await message.answer(
-        "👇 Выбери свой ник:",
+        "👇 Выбери, от кого ты пришел:",
         reply_markup=keyboard
     )
 
