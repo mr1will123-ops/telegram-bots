@@ -1,9 +1,7 @@
 import os
 import logging
 import csv
-import json
-import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from io import StringIO
 from collections import Counter
 from aiohttp import web
@@ -11,7 +9,6 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
-import asyncio
 import random
 
 # ========== НАСТРОЙКИ ==========
@@ -21,45 +18,28 @@ logger = logging.getLogger(__name__)
 BOT1_TOKEN = os.getenv("BOT1_TOKEN")
 BOT2_TOKEN = os.getenv("BOT2_TOKEN")
 
-# ГЛАВНЫЙ АДМИН (его действия не логируются)
-MASTER_ADMIN = 5791631996
-
 # СПИСОК АДМИНОВ
 ADMIN_IDS = [
-    5791631996,
-    5240956863,
-    7640732474,
+    5791631996,   # Ваш ID
+    5240956863,   # Второй админ
+    7640732474,   # Третий админ
 ]
 
-# ПАРОЛИ
+# ПАРОЛЬ ДЛЯ ВХОДА В АДМИН-ПАНЕЛЬ
 ADMIN_PASSWORD = "3536"
-CLEAR_PASSWORD = "3536"
-BAN_PASSWORD = "3536"
 
 LOG_CHANNEL = -1004359363247
 CHANNEL_LINK = "https://t.me/managers_stack"
 PORT = int(os.getenv("PORT", 8080))
 RENDER = os.getenv("RENDER", "false").lower() == "true"
 
-REPORT_EMAIL = "mr1will123@gmail.com"
-
 # ========== НИКИ ==========
 NICKNAMES = ["Dobry_p2p"]
 
-# ========== БАЗЫ ДАННЫХ ==========
-user_data = []
-banned_users = []
-user_actions = []
-referrals = {}
-notifications = {admin_id: True for admin_id in ADMIN_IDS}
-backup_counter = 0
-waiting_states = {}
-
-# ========== КАРТИНКИ ==========
-WELCOME_EMOJIS = ["🌟", "🎉", "✨", "🌈", "🔥", "💫", "⭐", "🎊"]
-
-def get_random_emoji():
-    return random.choice(WELCOME_EMOJIS)
+# ========== БАЗА ДАННЫХ ==========
+user_data = []  # Список словарей: {user_id, username, nickname, timestamp}
+waiting_states = {}  # Для состояний админов
+notifications = {admin_id: True for admin_id in ADMIN_IDS}  # Уведомления включены по умолчанию
 
 # ========== ФУНКЦИИ РАБОТЫ С ДАННЫМИ ==========
 def save_user(user_id, username, nickname):
@@ -72,11 +52,22 @@ def save_user(user_id, username, nickname):
 
 def get_stats():
     total = len(user_data)
-    unique_nicks = len(set(u["nickname"] for u in user_data))
-    return total, unique_nicks
+    # Считаем популярность ников
+    nick_counts = Counter([u["nickname"] for u in user_data])
+    popular = nick_counts.most_common(5)  # Топ-5 самых популярных
+    return total, popular
 
-def get_all_users():
-    return user_data
+def find_user_by_id(user_id):
+    for u in user_data:
+        if u["user_id"] == user_id:
+            return u
+    return None
+
+def find_user_by_username(username):
+    for u in user_data:
+        if u["username"].lower() == username.lower():
+            return u
+    return None
 
 def export_csv():
     output = StringIO()
@@ -86,84 +77,28 @@ def export_csv():
         writer.writerow([u["user_id"], u["username"], u["nickname"], u["timestamp"]])
     return output.getvalue()
 
-def find_user(user_id):
-    for u in user_data:
-        if u["user_id"] == user_id:
-            return u
-    return None
-
-def get_user_history(user_id):
-    return [u for u in user_data if u["user_id"] == user_id]
-
-def get_top_nicknames(limit=5):
-    nicknames = [u["nickname"] for u in user_data]
-    return Counter(nicknames).most_common(limit)
-
-def get_activity_by_day(days=7):
-    today = datetime.now()
-    activity = {}
-    for i in range(days):
-        day = (today - timedelta(days=i)).strftime("%d.%m")
-        activity[day] = 0
-    for u in user_data:
-        try:
-            date = datetime.strptime(u["timestamp"].split()[0], "%d.%m.%Y")
-            day_key = date.strftime("%d.%m")
-            if day_key in activity:
-                activity[day_key] += 1
-        except:
-            pass
-    sorted_days = sorted(activity.keys())
-    return {day: activity[day] for day in sorted_days}
-
-def get_referral_stats(user_id):
-    return [uid for uid, inviter in referrals.items() if inviter == user_id]
-
-def clear_history():
-    user_data.clear()
-    referrals.clear()
-
-def backup_data():
-    global backup_counter
-    backup_counter += 1
-    data = {
-        "users": user_data,
-        "banned": banned_users,
-        "referrals": referrals,
-        "timestamp": datetime.now().isoformat()
-    }
-    return json.dumps(data, ensure_ascii=False, indent=2)
-
-def log_action(user_id, action, details=None):
-    if user_id == MASTER_ADMIN:
-        return
-    user_actions.append({
-        "user_id": user_id,
-        "action": action,
-        "details": details or "",
-        "timestamp": datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-    })
-
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
-# ========== КЛАВИАТУРЫ ==========
+def get_random_emoji():
+    emojis = ["🌟", "🎉", "✨", "🌈", "🔥", "💫", "⭐", "🎊"]
+    return random.choice(emojis)
+
+# ========== КЛАВИАТУРА ДЛЯ АДМИНА ==========
 def get_admin_keyboard():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="🏆 Топ ников")],
-            [KeyboardButton(text="📈 График активности"), KeyboardButton(text="📋 Все пользователи")],
-            [KeyboardButton(text="📁 Экспорт CSV"), KeyboardButton(text="📤 Бэкап базы")],
-            [KeyboardButton(text="🔍 Профиль пользователя"), KeyboardButton(text="🔗 Приглашения")],
-            [KeyboardButton(text="🚫 Бан-лист"), KeyboardButton(text="🚫 Забанить пользователя")],
-            [KeyboardButton(text="📋 Логи админов"), KeyboardButton(text="🔔 Настройка уведомлений")],
-            [KeyboardButton(text="🗑️ Очистить историю"), KeyboardButton(text="❌ Закрыть админ-панель")]
+            [KeyboardButton(text="📊 Статистика")],
+            [KeyboardButton(text="📁 Экспорт CSV")],
+            [KeyboardButton(text="🔍 Поиск пользователя")],
+            [KeyboardButton(text="🔔 Уведомления")],
+            [KeyboardButton(text="❌ Закрыть админ-панель")]
         ],
         resize_keyboard=True
     )
     return keyboard
 
-# ========== БОТ №1 ==========
+# ========== БОТ №1 (ПЕРЕХОДНИК) ==========
 bot1 = Bot(token=BOT1_TOKEN)
 dp1 = Dispatcher()
 
@@ -187,16 +122,12 @@ async def go_next(callback: CallbackQuery):
         "🔗 Переходи в бота для выбора ника:\nhttps://t.me/ManagerTeem_bot"
     )
 
-# ========== БОТ №2 ==========
+# ========== БОТ №2 (ВЫБОР НИКА) ==========
 bot2 = Bot(token=BOT2_TOKEN)
 dp2 = Dispatcher()
 
 @dp2.message(Command("start"))
 async def start_bot2(message: Message):
-    if message.from_user.id in banned_users:
-        await message.answer("🚫 Вы забанены! Обратитесь к администратору.")
-        return
-    
     if not NICKNAMES:
         await message.answer("😕 Ники закончились. Обратитесь к администратору.")
         return
@@ -219,10 +150,7 @@ async def choose_nickname(callback: CallbackQuery):
     username = callback.from_user.username or "без юзернейма"
     nickname = callback.data.replace("nick_", "")
     
-    if user_id in banned_users:
-        await callback.answer("🚫 Вы забанены!")
-        return
-    
+    # Сохраняем данные
     save_user(user_id, username, nickname)
     
     now = datetime.now()
@@ -237,6 +165,7 @@ async def choose_nickname(callback: CallbackQuery):
         f"🕐 Время: {date_str} | {time_str}"
     )
     
+    # Отправляем уведомления админам (у кого включены)
     for admin_id in ADMIN_IDS:
         if notifications.get(admin_id, True):
             try:
@@ -244,6 +173,7 @@ async def choose_nickname(callback: CallbackQuery):
             except:
                 pass
     
+    # Отправляем в канал-логер
     try:
         await bot2.send_message(chat_id=LOG_CHANNEL, text=admin_message)
     except:
@@ -266,85 +196,31 @@ async def admin_panel(message: Message):
         await message.answer("⛔ У вас нет прав администратора.")
         return
     
-    if user_id != MASTER_ADMIN:
-        log_action(user_id, "Вход в админ-панель")
-    
     waiting_states[user_id] = "waiting_admin_password"
     await message.answer(
         "🔐 **Введите пароль для доступа к админ-панели:**",
         parse_mode="Markdown"
     )
 
-# ========== ОБРАБОТЧИКИ АДМИН-ПАНЕЛИ ==========
+# ========== ОБРАБОТЧИКИ КНОПОК АДМИН-ПАНЕЛИ ==========
 @dp2.message(F.text == "📊 Статистика")
 async def show_stats(message: Message):
     if not is_admin(message.from_user.id):
         return
     
-    total, unique = get_stats()
-    await message.answer(
-        f"📊 **Статистика**\n\n"
-        f"👥 Всего пользователей: {total}\n"
-        f"📛 Уникальных ников: {unique}\n"
-        f"📝 Всего ников в списке: {len(NICKNAMES)}\n"
-        f"🚫 Забанено: {len(banned_users)}\n"
-        f"📤 Бэкапов: {backup_counter}",
-        parse_mode="Markdown"
-    )
-
-@dp2.message(F.text == "🏆 Топ ников")
-async def show_top_nicknames(message: Message):
-    if not is_admin(message.from_user.id):
-        return
+    total, popular = get_stats()
     
-    top = get_top_nicknames(10)
-    if not top:
-        await message.answer("📭 Пока нет данных.")
-        return
+    text = f"📊 **Статистика**\n\n"
+    text += f"👥 Всего пользователей: {total}\n"
+    text += f"📝 Всего ников в списке: {len(NICKNAMES)}\n\n"
     
-    text = "🏆 **Топ-10 самых популярных ников:**\n\n"
-    for i, (nick, count) in enumerate(top, 1):
-        emoji = ["🥇", "🥈", "🥉"][i-1] if i <= 3 else f"{i}."
-        text += f"{emoji} {nick} — {count} раз(а)\n"
-    
-    await message.answer(text, parse_mode="Markdown")
-
-@dp2.message(F.text == "📈 График активности")
-async def show_activity_graph(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    
-    activity = get_activity_by_day(7)
-    if not activity or all(v == 0 for v in activity.values()):
-        await message.answer("📭 Нет активности за последние 7 дней.")
-        return
-    
-    max_val = max(activity.values()) or 1
-    text = "📈 **График активности (последние 7 дней)**\n\n"
-    
-    for day, count in activity.items():
-        bar_length = int((count / max_val) * 20)
-        bar = "█" * bar_length + "░" * (20 - bar_length)
-        text += f"`{day}` {bar} {count}\n"
-    
-    await message.answer(text, parse_mode="Markdown")
-
-@dp2.message(F.text == "📋 Все пользователи")
-async def show_all_users(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    
-    users = get_all_users()
-    if not users:
-        await message.answer("📭 Пока нет пользователей.")
-        return
-    
-    text = "📋 **Список пользователей:**\n\n"
-    for i, u in enumerate(users[-20:], 1):
-        text += f"{i}. @{u['username']} → {u['nickname']} ({u['timestamp']})\n"
-    
-    if len(users) > 20:
-        text += f"\n... и еще {len(users) - 20} пользователей."
+    if popular:
+        text += "🏆 **Самые популярные ники:**\n"
+        for i, (nick, count) in enumerate(popular, 1):
+            emoji = ["🥇", "🥈", "🥉"][i-1] if i <= 3 else f"{i}."
+            text += f"{emoji} {nick} — {count} чел.\n"
+    else:
+        text += "📭 Пока нет данных."
     
     await message.answer(text, parse_mode="Markdown")
 
@@ -353,105 +229,28 @@ async def export_csv_handler(message: Message):
     if not is_admin(message.from_user.id):
         return
     
-    users = get_all_users()
-    if not users:
+    if not user_data:
         await message.answer("📭 Нет данных для экспорта.")
         return
     
     csv_data = export_csv()
     await message.answer_document(
         document=("users_export.csv", csv_data.encode("utf-8")),
-        caption=f"📁 Экспорт данных ({len(users)} пользователей)"
+        caption=f"📁 Экспорт данных ({len(user_data)} пользователей)"
     )
 
-@dp2.message(F.text == "📤 Бэкап базы")
-async def backup_handler(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    
-    backup = backup_data()
-    await message.answer_document(
-        document=("backup.json", backup.encode("utf-8")),
-        caption=f"📤 Бэкап базы #{backup_counter}\n{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
-    )
-
-@dp2.message(F.text == "🔍 Профиль пользователя")
+@dp2.message(F.text == "🔍 Поиск пользователя")
 async def search_user_start(message: Message):
     if not is_admin(message.from_user.id):
         return
     
-    waiting_states[message.from_user.id] = "waiting_user_id"
-    await message.answer("🔍 Введите ID пользователя:", reply_markup=None)
-
-@dp2.message(F.text == "🔗 Приглашения")
-async def referrals_handler(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    
-    waiting_states[message.from_user.id] = "waiting_referral_id"
-    await message.answer("🔗 Введите ID пользователя для просмотра приглашений:", reply_markup=None)
-
-@dp2.message(F.text == "🚫 Бан-лист")
-async def show_banned(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    
-    if not banned_users:
-        await message.answer("🚫 Бан-лист пуст.")
-        return
-    
-    text = "🚫 **Бан-лист:**\n\n"
-    for uid in banned_users:
-        user = find_user(uid)
-        if user:
-            text += f"• @{user['username']} (ID: {uid})\n"
-        else:
-            text += f"• ID: {uid}\n"
-    
-    await message.answer(text, parse_mode="Markdown")
-
-@dp2.message(F.text == "🚫 Забанить пользователя")
-async def ban_user_start(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    
-    waiting_states[message.from_user.id] = "waiting_ban_user"
+    waiting_states[message.from_user.id] = "waiting_search"
     await message.answer(
-        "🚫 Введите ID пользователя для бана.\n\n"
-        "⚠️ Для подтверждения потребуется пароль: `3536`",
-        parse_mode="Markdown",
+        "🔍 Введите ID или @username пользователя:",
         reply_markup=None
     )
 
-@dp2.message(F.text == "📋 Логи админов")
-async def show_admin_logs(message: Message):
-    user_id = message.from_user.id
-    
-    if not is_admin(user_id):
-        return
-    
-    if user_id == MASTER_ADMIN:
-        logs = user_actions
-    else:
-        logs = [a for a in user_actions if a["user_id"] == user_id]
-    
-    if not logs:
-        await message.answer("📋 Логов пока нет.")
-        return
-    
-    text = "📋 **Логи действий:**\n\n"
-    for log in logs[-20:]:
-        text += f"• {log['timestamp']} — {log['action']}"
-        if log['details']:
-            text += f" ({log['details']})"
-        text += "\n"
-    
-    if len(logs) > 20:
-        text += f"\n... и еще {len(logs) - 20} записей."
-    
-    await message.answer(text, parse_mode="Markdown")
-
-@dp2.message(F.text == "🔔 Настройка уведомлений")
+@dp2.message(F.text == "🔔 Уведомления")
 async def notifications_settings(message: Message):
     if not is_admin(message.from_user.id):
         return
@@ -461,8 +260,8 @@ async def notifications_settings(message: Message):
     
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🔔 Включить уведомления" if not current else "🔕 Отключить уведомления")],
-            [KeyboardButton(text="🔙 Назад в админ-панель")]
+            [KeyboardButton(text="🔕 Отключить уведомления" if current else "🔔 Включить уведомления")],
+            [KeyboardButton(text="🔙 Назад")]
         ],
         resize_keyboard=True
     )
@@ -489,25 +288,22 @@ async def disable_notifications(message: Message):
     notifications[message.from_user.id] = False
     await message.answer("✅ Уведомления отключены!", reply_markup=get_admin_keyboard())
 
-@dp2.message(F.text == "🔙 Назад в админ-панель")
+@dp2.message(F.text == "🔙 Назад")
 async def back_to_admin(message: Message):
     if not is_admin(message.from_user.id):
         return
-    await admin_panel(message)
+    await admin_panel_after_password(message)
 
-@dp2.message(F.text == "🗑️ Очистить историю")
-async def clear_history_start(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    
-    waiting_states[message.from_user.id] = "waiting_clear_password"
+async def admin_panel_after_password(message: Message):
+    """Открывает админ-панель после ввода пароля"""
+    total, popular = get_stats()
     await message.answer(
-        "⚠️ **ВНИМАНИЕ!**\n\n"
-        "Вы собираетесь удалить ВСЮ историю.\n"
-        "Это действие НЕЛЬЗЯ отменить!\n\n"
-        f"Введите пароль для подтверждения: `{CLEAR_PASSWORD}`",
-        parse_mode="Markdown",
-        reply_markup=None
+        f"👑 **Админ-панель**\n\n"
+        f"📊 Всего пользователей: {total}\n"
+        f"🏆 Самый популярный ник: {popular[0][0] if popular else 'Нет данных'}\n\n"
+        f"Выберите действие:",
+        reply_markup=get_admin_keyboard(),
+        parse_mode="Markdown"
     )
 
 @dp2.message(F.text == "❌ Закрыть админ-панель")
@@ -518,7 +314,7 @@ async def close_admin(message: Message):
     waiting_states.pop(message.from_user.id, None)
     await message.answer("👋 Админ-панель закрыта.", reply_markup=None)
 
-# ========== ОБРАБОТЧИКИ ТЕКСТОВЫХ ВВОДОВ ==========
+# ========== ОБРАБОТЧИКИ ТЕКСТОВОГО ВВОДА ==========
 @dp2.message(F.text)
 async def handle_text_input(message: Message):
     user_id = message.from_user.id
@@ -526,126 +322,52 @@ async def handle_text_input(message: Message):
     
     state = waiting_states.get(user_id)
     
-    # 2FA пароль
+    # Проверка пароля для входа в админку
     if state == "waiting_admin_password":
         if text == ADMIN_PASSWORD:
             waiting_states.pop(user_id, None)
+            await message.answer("✅ Доступ разрешен!", reply_markup=get_admin_keyboard())
+            total, popular = get_stats()
             await message.answer(
-                "✅ Доступ разрешен!\n\n"
-                "👑 **Админ-панель**",
-                reply_markup=get_admin_keyboard(),
-                parse_mode="Markdown"
-            )
-            total, unique = get_stats()
-            await message.answer(
+                f"👑 **Админ-панель**\n\n"
                 f"📊 Всего пользователей: {total}\n"
-                f"📛 Уникальных ников: {unique}\n"
-                f"📝 Всего ников: {len(NICKNAMES)}",
+                f"🏆 Самый популярный ник: {popular[0][0] if popular else 'Нет данных'}\n\n"
+                f"Выберите действие:",
                 parse_mode="Markdown"
             )
         else:
             await message.answer("❌ Неверный пароль!")
         return
     
-    # Пароль для очистки
-    if state == "waiting_clear_password":
-        if text == CLEAR_PASSWORD:
-            clear_history()
-            waiting_states.pop(user_id, None)
-            await message.answer(
-                "✅ История успешно очищена!",
-                reply_markup=get_admin_keyboard()
-            )
-        else:
-            await message.answer(
-                "❌ Неверный пароль! Попробуйте снова.",
-                reply_markup=get_admin_keyboard()
-            )
-        return
-    
     # Поиск пользователя
-    if state == "waiting_user_id":
-        if text.isdigit():
-            user = find_user(int(text))
-            if user:
-                history = get_user_history(int(text))
-                await message.answer(
-                    f"👤 **Профиль пользователя:**\n\n"
-                    f"🆔 ID: {user['user_id']}\n"
-                    f"👤 Username: @{user['username']}\n"
-                    f"📛 Ник: {user['nickname']}\n"
-                    f"🕐 Время: {user['timestamp']}\n"
-                    f"📋 Всего выборов: {len(history)}",
-                    parse_mode="Markdown",
-                    reply_markup=get_admin_keyboard()
-                )
-            else:
-                await message.answer(
-                    f"❌ Пользователь с ID {text} не найден.",
-                    reply_markup=get_admin_keyboard()
-                )
-        else:
-            await message.answer("❌ Введите корректный ID.", reply_markup=get_admin_keyboard())
+    if state == "waiting_search":
         waiting_states.pop(user_id, None)
-        return
-    
-    # Приглашения
-    if state == "waiting_referral_id":
+        
+        if not text:
+            await message.answer("❌ Введите ID или username.", reply_markup=get_admin_keyboard())
+            return
+        
+        user = None
         if text.isdigit():
-            invited = get_referral_stats(int(text))
-            if invited:
-                text_msg = f"🔗 **Приглашения пользователя {text}:**\n\n"
-                for uid in invited:
-                    u = find_user(uid)
-                    if u:
-                        text_msg += f"• @{u['username']} (ID: {uid})\n"
-                    else:
-                        text_msg += f"• ID: {uid}\n"
-                await message.answer(text_msg, parse_mode="Markdown", reply_markup=get_admin_keyboard())
-            else:
-                await message.answer(
-                    f"❌ Пользователь {text} никого не пригласил.",
-                    reply_markup=get_admin_keyboard()
-                )
+            user = find_user_by_id(int(text))
+        elif text.startswith("@"):
+            user = find_user_by_username(text[1:])
         else:
-            await message.answer("❌ Введите корректный ID.", reply_markup=get_admin_keyboard())
-        waiting_states.pop(user_id, None)
-        return
-    
-    # Бан пользователя
-    if state == "waiting_ban_user":
-        if text.isdigit():
-            waiting_states[user_id] = "waiting_ban_password"
-            waiting_states[f"{user_id}_ban_target"] = int(text)
+            user = find_user_by_username(text)
+        
+        if user:
             await message.answer(
-                f"⚠️ Вы собираетесь забанить пользователя ID: {text}\n"
-                f"Введите пароль для подтверждения: `{BAN_PASSWORD}`",
-                parse_mode="Markdown"
+                f"👤 **Найден пользователь:**\n\n"
+                f"🆔 ID: {user['user_id']}\n"
+                f"👤 Username: @{user['username']}\n"
+                f"📛 Выбрал ник: {user['nickname']}\n"
+                f"🕐 Время: {user['timestamp']}",
+                parse_mode="Markdown",
+                reply_markup=get_admin_keyboard()
             )
         else:
-            await message.answer("❌ Введите корректный ID.")
-        return
-    
-    # Подтверждение бана
-    if state == "waiting_ban_password":
-        if text == BAN_PASSWORD:
-            target_id = waiting_states.get(f"{user_id}_ban_target")
-            if target_id and target_id not in banned_users:
-                banned_users.append(target_id)
-                waiting_states.pop(user_id, None)
-                waiting_states.pop(f"{user_id}_ban_target", None)
-                await message.answer(
-                    f"✅ Пользователь ID {target_id} забанен!",
-                    reply_markup=get_admin_keyboard()
-                )
-            else:
-                await message.answer(
-                    "❌ Пользователь уже в бане или ID не найден.",
-                    reply_markup=get_admin_keyboard()
-                )
-        else:
             await message.answer(
-                "❌ Неверный пароль!",
+                f"❌ Пользователь не найден.",
                 reply_markup=get_admin_keyboard()
             )
         return
@@ -654,94 +376,9 @@ async def handle_text_input(message: Message):
     if is_admin(user_id):
         await message.answer("Используйте кнопки меню.", reply_markup=get_admin_keyboard())
 
-# ========== АВТОМАТИЧЕСКИЙ ОТЧЕТ ==========
-async def send_weekly_report():
-    total, unique = get_stats()
-    top = get_top_nicknames(5)
-    activity = get_activity_by_day(7)
-    
-    report = f"""
-📊 **ЕЖЕНЕДЕЛЬНЫЙ ОТЧЕТ**
-📅 {datetime.now().strftime('%d.%m.%Y')}
-
-👥 Всего пользователей: {total}
-📛 Уникальных ников: {unique}
-🚫 Забанено: {len(banned_users)}
-
-🏆 Топ-5 ников:
-"""
-    for i, (nick, count) in enumerate(top, 1):
-        report += f"   {i}. {nick} — {count} раз(а)\n"
-    
-    report += "\n📈 Активность по дням:\n"
-    for day, count in activity.items():
-        report += f"   {day}: {count} чел.\n"
-    
-    try:
-        await bot2.send_message(chat_id=LOG_CHANNEL, text=report, parse_mode="Markdown")
-    except:
-        pass
-    
-    try:
-        await bot2.send_message(chat_id=MASTER_ADMIN, text=report, parse_mode="Markdown")
-    except:
-        pass
-    
-    logger.info("Еженедельный отчет отправлен")
-
-async def auto_backup():
-    backup = backup_data()
-    with open(f"backup_{datetime.now().strftime('%Y%m%d')}.json", "w") as f:
-        f.write(backup)
-    logger.info("Автоматический бэкап создан")
-
-# ========== ВЕБ-ДАШБОРД ==========
-async def dashboard_page(request):
-    total, unique = get_stats()
-    top = get_top_nicknames(5)
-    
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Telegram Bot Dashboard</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 40px; background: #f0f0f0; }}
-            .card {{ background: white; padding: 20px; border-radius: 10px; margin: 10px 0; }}
-            .stats {{ display: flex; gap: 20px; }}
-            .stat {{ background: #4CAF50; color: white; padding: 20px; border-radius: 10px; flex: 1; text-align: center; }}
-            h1 {{ color: #333; }}
-        </style>
-    </head>
-    <body>
-        <h1>📊 Dashboard</h1>
-        <div class="stats">
-            <div class="stat">👥 {total}<br>Пользователей</div>
-            <div class="stat">📛 {unique}<br>Уникальных ников</div>
-            <div class="stat">🚫 {len(banned_users)}<br>Забанено</div>
-        </div>
-        <div class="card">
-            <h2>🏆 Топ-5 ников</h2>
-            <ul>
-    """
-    for nick, count in top:
-        html += f"<li>{nick} — {count} раз(а)</li>"
-    
-    html += """
-            </ul>
-        </div>
-        <div class="card">
-            <p>📅 Обновлено: """ + datetime.now().strftime('%d.%m.%Y %H:%M:%S') + """</p>
-        </div>
-    </body>
-    </html>
-    """
-    return web.Response(text=html, content_type="text/html")
-
 # ========== ВЕБХУКИ И СЕРВЕР ==========
 WEBHOOK_PATH1 = "/webhook/bot1"
 WEBHOOK_PATH2 = "/webhook/bot2"
-DASHBOARD_PATH = "/dashboard"
 
 async def on_startup(app):
     if RENDER:
@@ -761,22 +398,10 @@ async def on_startup(app):
     await bot1.set_webhook(url=webhook_url1)
     await bot2.set_webhook(url=webhook_url2)
     logger.info("Webhooks set!")
-    
-    asyncio.create_task(schedule_tasks())
-
-async def schedule_tasks():
-    while True:
-        now = datetime.now()
-        if now.hour == 0 and now.minute == 0:
-            await auto_backup()
-        if now.weekday() == 6 and now.hour == 10 and now.minute == 0:
-            await send_weekly_report()
-        await asyncio.sleep(60)
 
 async def on_shutdown():
     await bot1.delete_webhook()
     await bot2.delete_webhook()
-    backup_data()
 
 async def health_check(request):
     return web.Response(text="OK", status=200)
@@ -790,7 +415,6 @@ async def webhook_bot2(request):
 def main():
     app = web.Application()
     app.router.add_get("/health", health_check)
-    app.router.add_get(DASHBOARD_PATH, dashboard_page)
     app.router.add_post(WEBHOOK_PATH1, webhook_bot1)
     app.router.add_post(WEBHOOK_PATH2, webhook_bot2)
     
