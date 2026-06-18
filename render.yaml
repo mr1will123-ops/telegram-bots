@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: telegram-bots
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: BOT1_TOKEN
+        sync: false
+      - key: BOT2_TOKEN
+        sync: false
+      - key: RENDER
+        value: true
