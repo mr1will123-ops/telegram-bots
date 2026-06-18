@@ -1,6 +1,7 @@
 import os
 import logging
 import csv
+import sqlite3
 from datetime import datetime
 from io import StringIO
 from collections import Counter
@@ -24,38 +25,91 @@ PORT = int(os.getenv("PORT", 8080))
 RENDER = os.getenv("RENDER", "false").lower() == "true"
 NICKNAMES = ["Dobry_p2p"]
 
-user_data = []
-waiting_states = {}
-notifications = {admin_id: True for admin_id in ADMIN_IDS}
+# ========== БАЗА ДАННЫХ SQLITE ==========
+DB_NAME = "bot_database.db"
+
+def init_db():
+    """Создаёт таблицу при первом запуске"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            username TEXT,
+            nickname TEXT NOT NULL,
+            timestamp TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+    logger.info("База данных инициализирована")
 
 def save_user(user_id, username, nickname):
-    user_data.append({"user_id": user_id, "username": username, "nickname": nickname, "timestamp": datetime.now().strftime("%d.%m.%Y %H:%M:%S")})
+    """Сохраняет пользователя в БД"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO users (user_id, username, nickname, timestamp) VALUES (?, ?, ?, ?)",
+        (user_id, username, nickname, datetime.now().strftime("%d.%m.%Y %H:%M:%S"))
+    )
+    conn.commit()
+    conn.close()
+
+def get_all_users():
+    """Возвращает всех пользователей из БД"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, username, nickname, timestamp FROM users ORDER BY timestamp DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"user_id": r[0], "username": r[1], "nickname": r[2], "timestamp": r[3]} for r in rows]
 
 def get_stats():
-    total = len(user_data)
-    popular = Counter(u["nickname"] for u in user_data).most_common(5)
+    """Возвращает статистику"""
+    users = get_all_users()
+    total = len(users)
+    nicknames = [u["nickname"] for u in users]
+    popular = Counter(nicknames).most_common(5)
     return total, popular
 
 def find_user_by_id(user_id):
-    return next((u for u in user_data if u["user_id"] == user_id), None)
+    """Поиск пользователя по ID"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, username, nickname, timestamp FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {"user_id": row[0], "username": row[1], "nickname": row[2], "timestamp": row[3]}
+    return None
 
 def find_user_by_username(username):
-    return next((u for u in user_data if u["username"].lower() == username.lower()), None)
+    """Поиск пользователя по username"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, username, nickname, timestamp FROM users WHERE username LIKE ?", (username,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {"user_id": row[0], "username": row[1], "nickname": row[2], "timestamp": row[3]}
+    return None
 
 def export_csv():
+    """Экспортирует данные в CSV"""
+    users = get_all_users()
     output = StringIO()
     writer = csv.writer(output)
     writer.writerow(["User ID", "Username", "Nickname", "Timestamp"])
-    for u in user_data:
+    for u in users:
         writer.writerow([u["user_id"], u["username"], u["nickname"], u["timestamp"]])
     return output.getvalue()
 
-def is_admin(user_id):
-    return user_id in ADMIN_IDS
+# ========== НАСТРОЙКИ УВЕДОМЛЕНИЙ (хранятся в памяти) ==========
+notifications = {admin_id: True for admin_id in ADMIN_IDS}
+waiting_states = {}
 
-def random_emoji():
-    return random.choice(["🌟", "🎉", "✨", "🌈", "🔥", "💫", "⭐", "🎊"])
-
+# ========== КЛАВИАТУРЫ ==========
 def admin_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -68,6 +122,13 @@ def admin_keyboard():
         resize_keyboard=True
     )
 
+def is_admin(user_id):
+    return user_id in ADMIN_IDS
+
+def random_emoji():
+    return random.choice(["🌟", "🎉", "✨", "🌈", "🔥", "💫", "⭐", "🎊"])
+
+# ========== БОТ №1 ==========
 bot1 = Bot(token=BOT1_TOKEN)
 dp1 = Dispatcher()
 
@@ -81,6 +142,7 @@ async def go_next(callback: CallbackQuery):
     await callback.answer()
     await callback.message.answer("🔗 Переходи в бота для выбора ника:\nhttps://t.me/ManagerTeem_bot")
 
+# ========== БОТ №2 ==========
 bot2 = Bot(token=BOT2_TOKEN)
 dp2 = Dispatcher()
 
@@ -98,8 +160,12 @@ async def choose_nickname(callback: CallbackQuery):
     user_id = callback.from_user.id
     username = callback.from_user.username or "без юзернейма"
     nickname = callback.data.replace("nick_", "")
+    
+    # Сохраняем в БД
     save_user(user_id, username, nickname)
+    
     msg = f"🔔 НОВЫЙ ВЫБОР НИКА!\n\n👤 Юзернейм: @{username}\n🆔 ID: {user_id}\n📛 Выбрал ник: {nickname}\n🕐 Время: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
+    
     for admin_id in ADMIN_IDS:
         if notifications.get(admin_id, True):
             try:
@@ -110,12 +176,12 @@ async def choose_nickname(callback: CallbackQuery):
         await bot2.send_message(chat_id=LOG_CHANNEL, text=msg)
     except:
         pass
+    
     await callback.answer(f"✅ Ты выбрал ник: {nickname}")
     await callback.message.delete()
     await callback.message.answer(f"{random_emoji()} ✅ Отлично! Ты выбрал ник: {nickname}\n\n🔗 Переходи в канал:\n{CHANNEL_LINK}")
 
-# -------------------- АДМИН-ПАНЕЛЬ --------------------
-
+# ========== АДМИН-ПАНЕЛЬ ==========
 @dp2.message(Command("admin"))
 async def admin_panel(message: Message):
     if not is_admin(message.from_user.id):
@@ -143,13 +209,14 @@ async def stats_handler(message: Message):
 async def export_handler(message: Message):
     if not is_admin(message.from_user.id):
         return
-    if not user_data:
+    users = get_all_users()
+    if not users:
         await message.answer("📭 Нет данных для экспорта.")
         return
     csv_data = export_csv()
     await message.answer_document(
         document=("users_export.csv", csv_data.encode("utf-8")),
-        caption=f"📁 Экспорт ({len(user_data)} пользователей)"
+        caption=f"📁 Экспорт ({len(users)} пользователей)"
     )
 
 @dp2.message(F.text == "🔍 Поиск пользователя")
@@ -167,7 +234,7 @@ async def notif_menu(message: Message):
     status = "🔔 Включены" if current else "🔕 Отключены"
     kb = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🔔 Включить уведомления" if not current else "🔕 Отключить уведомления")],
+            [KeyboardButton(text="🔕 Отключить уведомления" if current else "🔔 Включить уведомления")],
             [KeyboardButton(text="🔙 Назад в админ-панель")]
         ],
         resize_keyboard=True
@@ -210,15 +277,13 @@ async def close_admin(message: Message):
     waiting_states.pop(message.from_user.id, None)
     await message.answer("👋 Админ-панель закрыта.", reply_markup=None)
 
-# -------------------- ОБРАБОТКА ТЕКСТА --------------------
-
+# ========== ОБРАБОТКА ТЕКСТА ==========
 @dp2.message(F.text)
 async def text_input(message: Message):
     user_id = message.from_user.id
     text = message.text.strip()
     state = waiting_states.get(user_id)
 
-    # Ввод пароля
     if state == "waiting_admin_password":
         if text == ADMIN_PASSWORD:
             waiting_states.pop(user_id, None)
@@ -232,7 +297,6 @@ async def text_input(message: Message):
             await message.answer("❌ Неверный пароль!")
         return
 
-    # Поиск пользователя
     if state == "waiting_search":
         waiting_states.pop(user_id, None)
         if not text:
@@ -261,16 +325,17 @@ async def text_input(message: Message):
             await message.answer("❌ Пользователь не найден.", reply_markup=admin_keyboard())
         return
 
-    # Если админ ввел что-то другое
     if is_admin(user_id):
         await message.answer("Используйте кнопки меню.", reply_markup=admin_keyboard())
 
-# -------------------- ВЕБХУКИ --------------------
-
+# ========== ВЕБХУКИ ==========
 WEBHOOK_PATH1 = "/webhook/bot1"
 WEBHOOK_PATH2 = "/webhook/bot2"
 
 async def on_startup(app):
+    # Инициализируем БД при старте
+    init_db()
+    
     if RENDER:
         base_url = os.getenv("RENDER_EXTERNAL_URL", "")
         if not base_url:
