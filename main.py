@@ -1,6 +1,9 @@
 import os
 import logging
+import csv
+import sqlite3
 from datetime import datetime
+from io import StringIO
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -26,8 +29,58 @@ CHANNEL_LINK = "https://t.me/managers_stack"
 PORT = int(os.getenv("PORT", 8080))
 RENDER = os.getenv("RENDER", "false").lower() == "true"
 
-# ========== НИКИ (ХРАНЯТСЯ В КОДЕ) ==========
-NICKNAMES = ["Dobry_p2p"]  # Добавляйте ники сюда через запятую
+# ========== НИКИ ==========
+NICKNAMES = ["Dobry_p2p"]
+
+# ========== БАЗА ДАННЫХ SQLITE ==========
+DB_NAME = "bot_database.db"
+
+def init_db():
+    """Создаёт таблицу при первом запуске"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            username TEXT,
+            nickname TEXT NOT NULL,
+            timestamp TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+    logger.info("База данных инициализирована")
+
+def save_user(user_id, username, nickname):
+    """Сохраняет пользователя в БД"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO users (user_id, username, nickname, timestamp) VALUES (?, ?, ?, ?)",
+        (user_id, username, nickname, datetime.now().strftime("%d.%m.%Y %H:%M:%S"))
+    )
+    conn.commit()
+    conn.close()
+
+def get_all_users():
+    """Возвращает всех пользователей из БД"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, username, nickname, timestamp FROM users ORDER BY timestamp DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"user_id": r[0], "username": r[1], "nickname": r[2], "timestamp": r[3]} for r in rows]
+
+def export_csv():
+    """Экспортирует данные в CSV"""
+    users = get_all_users()
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["User ID", "Username", "Nickname", "Timestamp"])
+    for u in users:
+        writer.writerow([u["user_id"], u["username"], u["nickname"], u["timestamp"]])
+    return output.getvalue()
 
 # ========== БОТ №1 (ПЕРЕХОДНИК) ==========
 bot1 = Bot(token=BOT1_TOKEN)
@@ -63,7 +116,6 @@ async def start_bot2(message: Message):
         await message.answer("😕 Ники закончились. Обратитесь к администратору.")
         return
     
-    # Создаем кнопки с никами
     keyboard_buttons = []
     for nickname in NICKNAMES:
         keyboard_buttons.append([InlineKeyboardButton(text=nickname, callback_data=f"nick_{nickname}")])
@@ -82,7 +134,9 @@ async def choose_nickname(callback: CallbackQuery):
     user_id = callback.from_user.id
     username = callback.from_user.username or "без юзернейма"
     
-    # Отправляем сообщение ВСЕМ админам
+    # Сохраняем в БД
+    save_user(user_id, username, nickname)
+    
     now = datetime.now()
     date_str = now.strftime("%d.%m.%Y")
     time_str = now.strftime("%H:%M:%S")
@@ -123,6 +177,9 @@ WEBHOOK_PATH1 = "/webhook/bot1"
 WEBHOOK_PATH2 = "/webhook/bot2"
 
 async def on_startup(app):
+    # Инициализируем БД при старте
+    init_db()
+    
     if RENDER:
         base_url = os.getenv("RENDER_EXTERNAL_URL", "")
         if not base_url:
@@ -141,7 +198,7 @@ async def on_startup(app):
     await bot2.set_webhook(url=webhook_url2)
     logger.info("Webhooks set!")
 
-async def on_shutdown():
+async def on_shutdown(app):
     await bot1.delete_webhook()
     await bot2.delete_webhook()
 
@@ -164,10 +221,6 @@ def main():
     app.on_shutdown.append(on_shutdown)
     
     logger.info(f"Server starting on port {PORT}")
-    web.run_app(app, host="0.0.0.0", port=PORT)
-
-if __name__ == "__main__":
-    main()
     web.run_app(app, host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
