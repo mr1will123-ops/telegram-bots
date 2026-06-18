@@ -1,10 +1,6 @@
 import os
 import logging
-import csv
-import sqlite3
 from datetime import datetime
-from io import StringIO
-from collections import Counter
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -18,89 +14,20 @@ logger = logging.getLogger(__name__)
 BOT1_TOKEN = os.getenv("BOT1_TOKEN")
 BOT2_TOKEN = os.getenv("BOT2_TOKEN")
 
-# СПИСОК АДМИНОВ (3 человека)
+# СПИСОК АДМИНОВ (кому приходят уведомления)
 ADMIN_IDS = [
-    5791631996,   # Вы
+    5791631996,   # Ваш ID
     5240956863,   # Второй админ
     7640732474,   # Третий админ
 ]
 
-LOG_CHANNEL = -1004359363247
+LOG_CHANNEL = -1004359363247  # ID канала
 CHANNEL_LINK = "https://t.me/managers_stack"
 PORT = int(os.getenv("PORT", 8080))
 RENDER = os.getenv("RENDER", "false").lower() == "true"
 
-# ========== НИКИ ==========
-NICKNAMES = ["Dobry_p2p"]
-
-# ========== БАЗА ДАННЫХ SQLITE ==========
-DB_NAME = "bot_database.db"
-
-def init_db():
-    """Создаёт таблицу при первом запуске"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            username TEXT,
-            nickname TEXT NOT NULL,
-            timestamp TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    conn.close()
-    logger.info("База данных инициализирована")
-
-def save_user(user_id, username, nickname):
-    """Сохраняет пользователя в БД"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO users (user_id, username, nickname, timestamp) VALUES (?, ?, ?, ?)",
-        (user_id, username, nickname, datetime.now().strftime("%d.%m.%Y %H:%M:%S"))
-    )
-    conn.commit()
-    conn.close()
-
-def get_all_users():
-    """Возвращает всех пользователей из БД"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id, username, nickname, timestamp FROM users ORDER BY timestamp DESC")
-    rows = cursor.fetchall()
-    conn.close()
-    return [{"user_id": r[0], "username": r[1], "nickname": r[2], "timestamp": r[3]} for r in rows]
-
-def get_stats():
-    """Возвращает статистику"""
-    users = get_all_users()
-    total = len(users)
-    nicknames = [u["nickname"] for u in users]
-    popular = Counter(nicknames).most_common(5)
-    return total, popular
-
-def find_user_by_id(user_id):
-    """Поиск пользователя по ID"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id, username, nickname, timestamp FROM users WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        return {"user_id": row[0], "username": row[1], "nickname": row[2], "timestamp": row[3]}
-    return None
-
-def export_csv():
-    """Экспортирует данные в CSV"""
-    users = get_all_users()
-    output = StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["User ID", "Username", "Nickname", "Timestamp"])
-    for u in users:
-        writer.writerow([u["user_id"], u["username"], u["nickname"], u["timestamp"]])
-    return output.getvalue()
+# ========== НИКИ (ХРАНЯТСЯ В КОДЕ) ==========
+NICKNAMES = ["Dobry_p2p"]  # Добавляйте ники сюда через запятую
 
 # ========== БОТ №1 (ПЕРЕХОДНИК) ==========
 bot1 = Bot(token=BOT1_TOKEN)
@@ -136,6 +63,7 @@ async def start_bot2(message: Message):
         await message.answer("😕 Ники закончились. Обратитесь к администратору.")
         return
     
+    # Создаем кнопки с никами
     keyboard_buttons = []
     for nickname in NICKNAMES:
         keyboard_buttons.append([InlineKeyboardButton(text=nickname, callback_data=f"nick_{nickname}")])
@@ -154,9 +82,7 @@ async def choose_nickname(callback: CallbackQuery):
     user_id = callback.from_user.id
     username = callback.from_user.username or "без юзернейма"
     
-    # Сохраняем в БД
-    save_user(user_id, username, nickname)
-    
+    # Отправляем сообщение ВСЕМ админам
     now = datetime.now()
     date_str = now.strftime("%d.%m.%Y")
     time_str = now.strftime("%H:%M:%S")
@@ -169,19 +95,22 @@ async def choose_nickname(callback: CallbackQuery):
         f"🕐 Время: {date_str} | {time_str}"
     )
     
-    # Отправляем ВСЕМ админам
+    # Отправляем КАЖДОМУ админу
     for admin_id in ADMIN_IDS:
         try:
             await bot2.send_message(chat_id=admin_id, text=admin_message)
+            logger.info(f"Отправлено админу {admin_id}")
         except Exception as e:
             logger.error(f"Не удалось отправить админу {admin_id}: {e}")
     
-    # Отправляем в канал
+    # Отправляем в канал-логер
     try:
         await bot2.send_message(chat_id=LOG_CHANNEL, text=admin_message)
+        logger.info(f"Отправлено в канал")
     except Exception as e:
         logger.error(f"Не удалось отправить в канал: {e}")
     
+    # Ответ пользователю
     await callback.answer(f"✅ Ты выбрал ник: {nickname}")
     await callback.message.delete()
     await callback.message.answer(
@@ -194,9 +123,6 @@ WEBHOOK_PATH1 = "/webhook/bot1"
 WEBHOOK_PATH2 = "/webhook/bot2"
 
 async def on_startup(app):
-    # Инициализируем БД
-    init_db()
-    
     if RENDER:
         base_url = os.getenv("RENDER_EXTERNAL_URL", "")
         if not base_url:
@@ -215,7 +141,7 @@ async def on_startup(app):
     await bot2.set_webhook(url=webhook_url2)
     logger.info("Webhooks set!")
 
-async def on_shutdown(app):
+async def on_shutdown():
     await bot1.delete_webhook()
     await bot2.delete_webhook()
 
