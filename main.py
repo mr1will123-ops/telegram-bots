@@ -17,9 +17,7 @@ logger = logging.getLogger(__name__)
 BOT1_TOKEN = os.getenv("BOT1_TOKEN")
 BOT2_TOKEN = os.getenv("BOT2_TOKEN")
 
-# НОВЫЙ КАНАЛ-ЛОГГЕР
 LOG_CHANNEL = -1004464117954
-
 CHANNEL_LINK = "https://t.me/managers_stack"
 PORT = int(os.getenv("PORT", 8080))
 RENDER = os.getenv("RENDER", "false").lower() == "true"
@@ -73,7 +71,7 @@ def export_csv():
         writer.writerow([u["user_id"], u["username"], u["nickname"], u["timestamp"]])
     return output.getvalue()
 
-# ========== БОТ №1 (ПЕРЕХОДНИК) ==========
+# ========== БОТ №1 ==========
 bot1 = Bot(token=BOT1_TOKEN)
 dp1 = Dispatcher()
 
@@ -96,12 +94,14 @@ async def go_next(callback: CallbackQuery):
         "🔗 Переходи в бота для выбора ника:\nhttps://t.me/ManagerTeem_bot"
     )
 
-# ========== БОТ №2 (ВЫБОР НИКА) ==========
+# ========== БОТ №2 ==========
 bot2 = Bot(token=BOT2_TOKEN)
 dp2 = Dispatcher()
 
 @dp2.message(Command("start"))
 async def start_bot2(message: Message):
+    logger.info(f"Бот2 получил /start от {message.from_user.id}")
+    
     if not NICKNAMES:
         await message.answer("😕 Ники закончились. Обратитесь к администратору.")
         return
@@ -119,18 +119,18 @@ async def start_bot2(message: Message):
 
 @dp2.callback_query(F.data.startswith("nick_"))
 async def choose_nickname(callback: CallbackQuery):
+    logger.info(f"Выбран ник: {callback.data}")
+    
     nickname = callback.data.replace("nick_", "")
     user_id = callback.from_user.id
     username = callback.from_user.username or "без юзернейма"
     
-    # Сохраняем в БД
     save_user(user_id, username, nickname)
     
     now = datetime.now()
     date_str = now.strftime("%d.%m.%Y")
     time_str = now.strftime("%H:%M:%S")
     
-    # Сообщение в канал-логер (БЕЗ уведомлений админам!)
     log_message = (
         f"🔔 НОВЫЙ ВЫБОР НИКА!\n\n"
         f"👤 Юзернейм: @{username}\n"
@@ -139,14 +139,12 @@ async def choose_nickname(callback: CallbackQuery):
         f"🕐 Время: {date_str} | {time_str}"
     )
     
-    # Отправляем ТОЛЬКО в канал-логер
     try:
         await bot2.send_message(chat_id=LOG_CHANNEL, text=log_message)
         logger.info(f"Отправлено в канал {LOG_CHANNEL}")
     except Exception as e:
         logger.error(f"Не удалось отправить в канал: {e}")
     
-    # Ответ пользователю
     await callback.answer(f"✅ Ты выбрал ник: {nickname}")
     await callback.message.delete()
     await callback.message.answer(
@@ -154,7 +152,22 @@ async def choose_nickname(callback: CallbackQuery):
         f"🔗 Переходи в канал:\n{CHANNEL_LINK}"
     )
 
-# ========== ВЕБХУКИ И СЕРВЕР ==========
+# ========== ЛОВУШКА ДЛЯ ВСЕХ СООБЩЕНИЙ ==========
+@dp2.message()
+async def catch_all(message: Message):
+    """Обрабатывает все сообщения, которые не попали в другие хендлеры"""
+    logger.info(f"Поймано сообщение: {message.text}")
+    
+    # Если это команда /start — обрабатываем вручную
+    if message.text and message.text.startswith("/start"):
+        await start_bot2(message)
+        return
+    
+    # Если это что-то другое — игнорируем или отвечаем
+    if message.text:
+        await message.answer("Используй /start для выбора ника")
+
+# ========== ВЕБХУКИ ==========
 WEBHOOK_PATH1 = "/webhook/bot1"
 WEBHOOK_PATH2 = "/webhook/bot2"
 
