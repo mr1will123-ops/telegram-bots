@@ -17,14 +17,9 @@ logger = logging.getLogger(__name__)
 BOT1_TOKEN = os.getenv("BOT1_TOKEN")
 BOT2_TOKEN = os.getenv("BOT2_TOKEN")
 
-# СПИСОК АДМИНОВ (кому приходят уведомления)
-ADMIN_IDS = [
-    5791631996,   # Ваш ID
-    5240956863,   # Второй админ
-    7640732474,   # Третий админ
-]
+# НОВЫЙ КАНАЛ-ЛОГГЕР
+LOG_CHANNEL = -1004464117954
 
-LOG_CHANNEL = -1004359363247  # ID канала
 CHANNEL_LINK = "https://t.me/managers_stack"
 PORT = int(os.getenv("PORT", 8080))
 RENDER = os.getenv("RENDER", "false").lower() == "true"
@@ -36,7 +31,6 @@ NICKNAMES = ["Dobry_p2p"]
 DB_NAME = "bot_database.db"
 
 def init_db():
-    """Создаёт таблицу при первом запуске"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("""
@@ -53,7 +47,6 @@ def init_db():
     logger.info("База данных инициализирована")
 
 def save_user(user_id, username, nickname):
-    """Сохраняет пользователя в БД"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute(
@@ -64,7 +57,6 @@ def save_user(user_id, username, nickname):
     conn.close()
 
 def get_all_users():
-    """Возвращает всех пользователей из БД"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT user_id, username, nickname, timestamp FROM users ORDER BY timestamp DESC")
@@ -73,7 +65,6 @@ def get_all_users():
     return [{"user_id": r[0], "username": r[1], "nickname": r[2], "timestamp": r[3]} for r in rows]
 
 def export_csv():
-    """Экспортирует данные в CSV"""
     users = get_all_users()
     output = StringIO()
     writer = csv.writer(output)
@@ -111,7 +102,6 @@ dp2 = Dispatcher()
 
 @dp2.message(Command("start"))
 async def start_bot2(message: Message):
-    """Показываем список ников"""
     if not NICKNAMES:
         await message.answer("😕 Ники закончились. Обратитесь к администратору.")
         return
@@ -129,7 +119,6 @@ async def start_bot2(message: Message):
 
 @dp2.callback_query(F.data.startswith("nick_"))
 async def choose_nickname(callback: CallbackQuery):
-    """Выбор ника"""
     nickname = callback.data.replace("nick_", "")
     user_id = callback.from_user.id
     username = callback.from_user.username or "без юзернейма"
@@ -141,7 +130,8 @@ async def choose_nickname(callback: CallbackQuery):
     date_str = now.strftime("%d.%m.%Y")
     time_str = now.strftime("%H:%M:%S")
     
-    admin_message = (
+    # Сообщение в канал-логер (БЕЗ уведомлений админам!)
+    log_message = (
         f"🔔 НОВЫЙ ВЫБОР НИКА!\n\n"
         f"👤 Юзернейм: @{username}\n"
         f"🆔 ID: {user_id}\n"
@@ -149,18 +139,10 @@ async def choose_nickname(callback: CallbackQuery):
         f"🕐 Время: {date_str} | {time_str}"
     )
     
-    # Отправляем КАЖДОМУ админу
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot2.send_message(chat_id=admin_id, text=admin_message)
-            logger.info(f"Отправлено админу {admin_id}")
-        except Exception as e:
-            logger.error(f"Не удалось отправить админу {admin_id}: {e}")
-    
-    # Отправляем в канал-логер
+    # Отправляем ТОЛЬКО в канал-логер
     try:
-        await bot2.send_message(chat_id=LOG_CHANNEL, text=admin_message)
-        logger.info(f"Отправлено в канал")
+        await bot2.send_message(chat_id=LOG_CHANNEL, text=log_message)
+        logger.info(f"Отправлено в канал {LOG_CHANNEL}")
     except Exception as e:
         logger.error(f"Не удалось отправить в канал: {e}")
     
@@ -177,7 +159,6 @@ WEBHOOK_PATH1 = "/webhook/bot1"
 WEBHOOK_PATH2 = "/webhook/bot2"
 
 async def on_startup(app):
-    # Инициализируем БД при старте
     init_db()
     
     if RENDER:
