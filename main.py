@@ -198,7 +198,6 @@ async def choose_nickname(callback: CallbackQuery):
         f"🕐 Время: {date_str} | {time_str}"
     )
     
-    # Отправляем в канал-логер
     try:
         await bot1.send_message(chat_id=LOG_CHANNEL, text=log_message)
         logger.info(f"Отправлено в канал {LOG_CHANNEL}")
@@ -218,7 +217,6 @@ async def choose_nickname(callback: CallbackQuery):
 bot2 = Bot(token=BOT2_TOKEN)
 dp2 = Dispatcher()
 
-# Список команд для помощи
 HELP_TEXT = (
     "👑 **Доступные команды в канале:**\n\n"
     "📊 `/stats` — Статистика\n"
@@ -235,10 +233,13 @@ HELP_TEXT = (
 
 @dp2.message()
 async def admin_commands(message: Message):
-    """Обрабатывает команды админов в канале-логере"""
+    """Обрабатывает все сообщения в канале-логере"""
+    
+    logger.info(f"Бот2 получил сообщение: {message.text} от {message.from_user.id} в чате {message.chat.id}")
     
     # Проверяем, что это канал-логер
     if message.chat.id != LOG_CHANNEL:
+        logger.info(f"Не канал-логер: {message.chat.id} != {LOG_CHANNEL}")
         return
     
     # Проверяем, что админ
@@ -252,7 +253,7 @@ async def admin_commands(message: Message):
     if not text or not text.startswith("/"):
         return
     
-    logger.info(f"Админ-команда в канале от {message.from_user.id}: {text}")
+    logger.info(f"Обрабатываю команду в канале: {text}")
     
     # Разбираем команду
     parts = text.split(maxsplit=1)
