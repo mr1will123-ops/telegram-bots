@@ -57,13 +57,16 @@ def random_emoji():
     return random.choice(["🌟", "🎉", "✨", "🌈", "🔥", "💫", "⭐", "🎊"])
 
 def admin_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📊 Статистика")],
-        [KeyboardButton(text="📁 Экспорт CSV")],
-        [KeyboardButton(text="🔍 Поиск пользователя")],
-        [KeyboardButton(text="🔔 Уведомления")],
-        [KeyboardButton(text="❌ Закрыть админ-панель")]
-    ], resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📊 Статистика")],
+            [KeyboardButton(text="📁 Экспорт CSV")],
+            [KeyboardButton(text="🔍 Поиск пользователя")],
+            [KeyboardButton(text="🔔 Уведомления")],
+            [KeyboardButton(text="❌ Закрыть админ-панель")]
+        ],
+        resize_keyboard=True
+    )
 
 bot1 = Bot(token=BOT1_TOKEN)
 dp1 = Dispatcher()
@@ -111,6 +114,8 @@ async def choose_nickname(callback: CallbackQuery):
     await callback.message.delete()
     await callback.message.answer(f"{random_emoji()} ✅ Отлично! Ты выбрал ник: {nickname}\n\n🔗 Переходи в канал:\n{CHANNEL_LINK}")
 
+# -------------------- АДМИН-ПАНЕЛЬ --------------------
+
 @dp2.message(Command("admin"))
 async def admin_panel(message: Message):
     if not is_admin(message.from_user.id):
@@ -142,7 +147,10 @@ async def export_handler(message: Message):
         await message.answer("📭 Нет данных для экспорта.")
         return
     csv_data = export_csv()
-    await message.answer_document(document=("users_export.csv", csv_data.encode("utf-8")), caption=f"📁 Экспорт ({len(user_data)} пользователей)")
+    await message.answer_document(
+        document=("users_export.csv", csv_data.encode("utf-8")),
+        caption=f"📁 Экспорт ({len(user_data)} пользователей)"
+    )
 
 @dp2.message(F.text == "🔍 Поиск пользователя")
 async def search_start(message: Message):
@@ -157,11 +165,18 @@ async def notif_menu(message: Message):
         return
     current = notifications.get(message.from_user.id, True)
     status = "🔔 Включены" if current else "🔕 Отключены"
-    kb = ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🔕 Отключить уведомления" if current else "🔔 Включить уведомления")],
-        [KeyboardButton(text="🔙 Назад")]
-    ], resize_keyboard=True)
-    await message.answer(f"**Настройка уведомлений**\n\nТекущий статус: {status}", parse_mode="Markdown", reply_markup=kb)
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🔔 Включить уведомления" if not current else "🔕 Отключить уведомления")],
+            [KeyboardButton(text="🔙 Назад в админ-панель")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer(
+        f"**Настройка уведомлений**\n\nТекущий статус: {status}",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
 
 @dp2.message(F.text == "🔔 Включить уведомления")
 async def enable_notif(message: Message):
@@ -177,12 +192,16 @@ async def disable_notif(message: Message):
     notifications[message.from_user.id] = False
     await message.answer("✅ Уведомления отключены!", reply_markup=admin_keyboard())
 
-@dp2.message(F.text == "🔙 Назад")
+@dp2.message(F.text == "🔙 Назад в админ-панель")
 async def back_to_admin(message: Message):
     if not is_admin(message.from_user.id):
         return
     total, popular = get_stats()
-    await message.answer(f"👑 **Админ-панель**\n\n📊 Всего пользователей: {total}\n🏆 Популярный ник: {popular[0][0] if popular else 'Нет данных'}", parse_mode="Markdown", reply_markup=admin_keyboard())
+    await message.answer(
+        f"👑 **Админ-панель**\n\n📊 Всего пользователей: {total}\n🏆 Популярный ник: {popular[0][0] if popular else 'Нет данных'}",
+        parse_mode="Markdown",
+        reply_markup=admin_keyboard()
+    )
 
 @dp2.message(F.text == "❌ Закрыть админ-панель")
 async def close_admin(message: Message):
@@ -191,25 +210,35 @@ async def close_admin(message: Message):
     waiting_states.pop(message.from_user.id, None)
     await message.answer("👋 Админ-панель закрыта.", reply_markup=None)
 
+# -------------------- ОБРАБОТКА ТЕКСТА --------------------
+
 @dp2.message(F.text)
 async def text_input(message: Message):
     user_id = message.from_user.id
     text = message.text.strip()
     state = waiting_states.get(user_id)
+
+    # Ввод пароля
     if state == "waiting_admin_password":
         if text == ADMIN_PASSWORD:
             waiting_states.pop(user_id, None)
             total, popular = get_stats()
             await message.answer("✅ Доступ разрешен!", reply_markup=admin_keyboard())
-            await message.answer(f"👑 **Админ-панель**\n\n📊 Всего пользователей: {total}\n🏆 Популярный ник: {popular[0][0] if popular else 'Нет данных'}", parse_mode="Markdown")
+            await message.answer(
+                f"👑 **Админ-панель**\n\n📊 Всего пользователей: {total}\n🏆 Популярный ник: {popular[0][0] if popular else 'Нет данных'}",
+                parse_mode="Markdown"
+            )
         else:
             await message.answer("❌ Неверный пароль!")
         return
+
+    # Поиск пользователя
     if state == "waiting_search":
         waiting_states.pop(user_id, None)
         if not text:
             await message.answer("❌ Введите ID или username.", reply_markup=admin_keyboard())
             return
+
         user = None
         if text.isdigit():
             user = find_user_by_id(int(text))
@@ -217,13 +246,26 @@ async def text_input(message: Message):
             user = find_user_by_username(text[1:])
         else:
             user = find_user_by_username(text)
+
         if user:
-            await message.answer(f"👤 **Найден пользователь:**\n\n🆔 ID: {user['user_id']}\n👤 Username: @{user['username']}\n📛 Ник: {user['nickname']}\n🕐 Время: {user['timestamp']}", parse_mode="Markdown", reply_markup=admin_keyboard())
+            await message.answer(
+                f"👤 **Найден пользователь:**\n\n"
+                f"🆔 ID: {user['user_id']}\n"
+                f"👤 Username: @{user['username']}\n"
+                f"📛 Ник: {user['nickname']}\n"
+                f"🕐 Время: {user['timestamp']}",
+                parse_mode="Markdown",
+                reply_markup=admin_keyboard()
+            )
         else:
             await message.answer("❌ Пользователь не найден.", reply_markup=admin_keyboard())
         return
+
+    # Если админ ввел что-то другое
     if is_admin(user_id):
         await message.answer("Используйте кнопки меню.", reply_markup=admin_keyboard())
+
+# -------------------- ВЕБХУКИ --------------------
 
 WEBHOOK_PATH1 = "/webhook/bot1"
 WEBHOOK_PATH2 = "/webhook/bot2"
@@ -240,9 +282,10 @@ async def on_startup(app):
     await bot2.set_webhook(url=f"{base_url}{WEBHOOK_PATH2}")
     logger.info("Webhooks set!")
 
-async def on_shutdown():
+async def on_shutdown(app):
     await bot1.delete_webhook()
     await bot2.delete_webhook()
+    logger.info("Webhooks deleted!")
 
 async def health_check(request):
     return web.Response(text="OK", status=200)
