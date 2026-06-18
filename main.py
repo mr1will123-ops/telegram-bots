@@ -1,4 +1,4 @@
-я же тебе долбаебу сказал, я делаю через import os
+
 import logging
 from datetime import datetime
 from aiohttp import web
