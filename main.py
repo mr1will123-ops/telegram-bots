@@ -174,6 +174,8 @@ dp2 = Dispatcher()
 
 @dp2.message(Command("start"))
 async def start_bot2(message: Message):
+    logger.info(f"Бот2: /start от {message.from_user.id}")
+    
     nicks = get_all_nicknames()
     if not nicks:
         await message.answer("😕 Ники закончились. Обратитесь к администратору.")
@@ -195,6 +197,8 @@ async def choose_nickname(callback: CallbackQuery):
     nickname = callback.data.replace("nick_", "")
     user_id = callback.from_user.id
     username = callback.from_user.username or "без юзернейма"
+    
+    logger.info(f"Бот2: выбор ника {nickname} от {user_id}")
     
     save_user(user_id, username, nickname)
     
@@ -245,25 +249,35 @@ HELP_TEXT = (
 
 @dp3.message()
 async def admin_commands(message: Message):
+    # Логируем всё, что приходит
+    logger.info(f"Бот3 получил: '{message.text}' от {message.from_user.id} в чате {message.chat.id}")
+    
+    # Проверяем, что это наш канал
     if message.chat.id != LOG_CHANNEL:
+        logger.info(f"Не канал-логер: {message.chat.id} != {LOG_CHANNEL}")
         return
     
+    # Проверяем, что админ
     if not is_admin(message.from_user.id):
-        await message.reply("⛔ У вас нет прав для использования команд в этом канале.")
+        await message.reply("⛔ Нет прав.")
         return
     
     text = message.text.strip() if message.text else ""
     if not text or not text.startswith("/"):
         return
     
+    logger.info(f"Обрабатываю команду: {text}")
+    
     parts = text.split(maxsplit=1)
     command = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
     
+    # ===== /help =====
     if command == "/help":
         await message.reply(HELP_TEXT, parse_mode="Markdown")
         return
     
+    # ===== /stats =====
     if command == "/stats":
         total, popular = get_stats()
         response = f"📊 **Статистика**\n\n👥 Всего пользователей: {total}\n"
@@ -275,6 +289,7 @@ async def admin_commands(message: Message):
         await message.reply(response, parse_mode="Markdown")
         return
     
+    # ===== /export =====
     if command == "/export":
         users = get_all_users()
         if not users:
@@ -287,6 +302,20 @@ async def admin_commands(message: Message):
         )
         return
     
+    # ===== /top =====
+    if command == "/top":
+        total, popular = get_stats()
+        if not popular:
+            await message.reply("📭 Пока нет данных.")
+            return
+        response = "🏆 **Топ-5 популярных ников:**\n\n"
+        for i, (nick, count) in enumerate(popular, 1):
+            emoji = ["🥇", "🥈", "🥉"][i-1] if i <= 3 else f"{i}."
+            response += f"{emoji} {nick} — {count} чел.\n"
+        await message.reply(response, parse_mode="Markdown")
+        return
+    
+    # ===== /list =====
     if command == "/list":
         nicks = get_all_nicknames()
         if not nicks:
@@ -296,6 +325,7 @@ async def admin_commands(message: Message):
         await message.reply(response, parse_mode="Markdown")
         return
     
+    # ===== /users =====
     if command == "/users":
         users = get_all_users()
         if not users:
@@ -305,10 +335,11 @@ async def admin_commands(message: Message):
         for i, u in enumerate(users[:10], 1):
             response += f"{i}. @{u['username']} → {u['nickname']} ({u['timestamp']})\n"
         if len(users) > 10:
-            response += f"\n... и еще {len(users) - 10} пользователей."
+            response += f"\n... и еще {len(users) - 10} пользователей. Используй `/export` для полного списка."
         await message.reply(response, parse_mode="Markdown")
         return
     
+    # ===== /search =====
     if command == "/search":
         if not args:
             await message.reply("❌ Введите: `/search @username` или `/search ID`", parse_mode="Markdown")
@@ -334,6 +365,7 @@ async def admin_commands(message: Message):
             await message.reply(f"❌ Пользователь не найден.")
         return
     
+    # ===== /add =====
     if command == "/add":
         if not args:
             await message.reply("❌ Введите: `/add Ник`", parse_mode="Markdown")
@@ -345,6 +377,7 @@ async def admin_commands(message: Message):
             await message.reply(f"❌ Ник `{nickname}` уже существует!", parse_mode="Markdown")
         return
     
+    # ===== /delete =====
     if command == "/delete":
         if not args:
             await message.reply("❌ Введите: `/delete Ник`", parse_mode="Markdown")
@@ -356,6 +389,7 @@ async def admin_commands(message: Message):
             await message.reply(f"❌ Ник `{nickname}` не найден!", parse_mode="Markdown")
         return
     
+    # ===== Неизвестная команда =====
     await message.reply(f"❌ Неизвестная команда. Используйте `/help` для списка команд.", parse_mode="Markdown")
 
 # ============================================================
