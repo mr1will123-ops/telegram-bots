@@ -16,25 +16,21 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Токены ботов
-BOT1_TOKEN = os.getenv("BOT1_TOKEN")          # Бот для сбора данных (@ManagerTeem_bot)
-BOT2_TOKEN = "8882199116:AAG1Ia9owULUQXM9zJ9lYjnyMDbcOP7D6v4"  # Бот для админ-команд в канале
+BOT1_TOKEN = os.getenv("BOT1_TOKEN")  # Бот-переходник
+BOT2_TOKEN = os.getenv("BOT2_TOKEN")  # Бот для выбора ника
+BOT3_TOKEN = "8882199116:AAG1Ia9owULUQXM9zJ9lYjnyMDbcOP7D6v4"  # Админ-бот в канале
 
 LOG_CHANNEL = -1004464117954
 CHANNEL_LINK = "https://t.me/managers_stack"
 PORT = int(os.getenv("PORT", 8080))
 RENDER = os.getenv("RENDER", "false").lower() == "true"
 
-# ID админов (кто может писать команды в канале)
-ADMIN_IDS = [
-    5791631996,   # Вы
-    5240956863,   # Второй админ
-    7640732474,   # Третий админ
-]
+ADMIN_IDS = [5791631996, 5240956863, 7640732474]
 
-# ========== НИКИ (начальные) ==========
+# ========== НИКИ ==========
 NICKNAMES = ["Dobry_p2p"]
 
-# ========== БАЗА ДАННЫХ SQLITE ==========
+# ========== БАЗА ДАННЫХ ==========
 DB_NAME = "bot_database.db"
 
 def init_db():
@@ -63,7 +59,6 @@ def init_db():
     conn.close()
     logger.info("База данных инициализирована")
 
-# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С НИКАМИ ==========
 def get_all_nicknames():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -93,7 +88,6 @@ def delete_nickname(nickname):
     conn.close()
     return deleted
 
-# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПОЛЬЗОВАТЕЛЯМИ ==========
 def save_user(user_id, username, nickname):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -152,13 +146,38 @@ def is_admin(user_id):
     return user_id in ADMIN_IDS
 
 # ============================================================
-# ========== БОТ №1 (СБОР ДАННЫХ В ЛИЧКЕ) ==========
+# ========== БОТ №1 (ПЕРЕХОДНИК) ==========
 # ============================================================
 bot1 = Bot(token=BOT1_TOKEN)
 dp1 = Dispatcher()
 
 @dp1.message(Command("start"))
 async def start_bot1(message: Message):
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="➡️ Перейти дальше", callback_data="go_next")]
+        ]
+    )
+    await message.answer(
+        "👋 Привет! Нажми кнопку, чтобы выбрать ник:",
+        reply_markup=keyboard
+    )
+
+@dp1.callback_query(F.data == "go_next")
+async def go_next(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.answer(
+        "🔗 Переходи в бота для выбора ника:\nhttps://t.me/ManagerTeem_bot"
+    )
+
+# ============================================================
+# ========== БОТ №2 (ВЫБОР НИКА) ==========
+# ============================================================
+bot2 = Bot(token=BOT2_TOKEN)
+dp2 = Dispatcher()
+
+@dp2.message(Command("start"))
+async def start_bot2(message: Message):
     if message.chat.type != "private":
         return
     
@@ -178,7 +197,7 @@ async def start_bot1(message: Message):
         reply_markup=keyboard
     )
 
-@dp1.callback_query(F.data.startswith("nick_"))
+@dp2.callback_query(F.data.startswith("nick_"))
 async def choose_nickname(callback: CallbackQuery):
     nickname = callback.data.replace("nick_", "")
     user_id = callback.from_user.id
@@ -199,7 +218,7 @@ async def choose_nickname(callback: CallbackQuery):
     )
     
     try:
-        await bot1.send_message(chat_id=LOG_CHANNEL, text=log_message)
+        await bot2.send_message(chat_id=LOG_CHANNEL, text=log_message)
         logger.info(f"Отправлено в канал {LOG_CHANNEL}")
     except Exception as e:
         logger.error(f"Не удалось отправить в канал: {e}")
@@ -212,10 +231,10 @@ async def choose_nickname(callback: CallbackQuery):
     )
 
 # ============================================================
-# ========== БОТ №2 (АДМИН-КОМАНДЫ В КАНАЛЕ) ==========
+# ========== БОТ №3 (АДМИН-КОМАНДЫ В КАНАЛЕ) ==========
 # ============================================================
-bot2 = Bot(token=BOT2_TOKEN)
-dp2 = Dispatcher()
+bot3 = Bot(token=BOT3_TOKEN)
+dp3 = Dispatcher()
 
 HELP_TEXT = (
     "👑 **Доступные команды в канале:**\n\n"
@@ -231,41 +250,32 @@ HELP_TEXT = (
     "❓ `/help` — Эта справка"
 )
 
-@dp2.message()
+@dp3.message()
 async def admin_commands(message: Message):
-    """Обрабатывает все сообщения в канале-логере"""
+    logger.info(f"Бот3 получил сообщение: {message.text} от {message.from_user.id} в чате {message.chat.id}")
     
-    logger.info(f"Бот2 получил сообщение: {message.text} от {message.from_user.id} в чате {message.chat.id}")
-    
-    # Проверяем, что это канал-логер
     if message.chat.id != LOG_CHANNEL:
         logger.info(f"Не канал-логер: {message.chat.id} != {LOG_CHANNEL}")
         return
     
-    # Проверяем, что админ
     if not is_admin(message.from_user.id):
         await message.reply("⛔ У вас нет прав для использования команд в этом канале.")
         return
     
     text = message.text.strip() if message.text else ""
-    
-    # Если это не команда или пусто — игнорируем
     if not text or not text.startswith("/"):
         return
     
     logger.info(f"Обрабатываю команду в канале: {text}")
     
-    # Разбираем команду
     parts = text.split(maxsplit=1)
     command = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
     
-    # ===== /help =====
     if command == "/help":
         await message.reply(HELP_TEXT, parse_mode="Markdown")
         return
     
-    # ===== /stats =====
     if command == "/stats":
         total, popular = get_stats()
         response = f"📊 **Статистика**\n\n👥 Всего пользователей: {total}\n"
@@ -277,13 +287,11 @@ async def admin_commands(message: Message):
         await message.reply(response, parse_mode="Markdown")
         return
     
-    # ===== /export =====
     if command == "/export":
         users = get_all_users()
         if not users:
             await message.reply("📭 Нет данных для экспорта.")
             return
-        
         csv_data = export_csv()
         await message.reply_document(
             document=("users_export.csv", csv_data.encode("utf-8")),
@@ -291,65 +299,52 @@ async def admin_commands(message: Message):
         )
         return
     
-    # ===== /top =====
     if command == "/top":
         total, popular = get_stats()
         if not popular:
             await message.reply("📭 Пока нет данных.")
             return
-        
         response = "🏆 **Топ-5 популярных ников:**\n\n"
         for i, (nick, count) in enumerate(popular, 1):
             emoji = ["🥇", "🥈", "🥉"][i-1] if i <= 3 else f"{i}."
             response += f"{emoji} {nick} — {count} чел.\n"
-        
         await message.reply(response, parse_mode="Markdown")
         return
     
-    # ===== /list =====
     if command == "/list":
         nicks = get_all_nicknames()
         if not nicks:
             await message.reply("📭 Ники отсутствуют.")
             return
-        
         response = "📋 **Список ников:**\n\n" + "\n".join(f"• {n}" for n in nicks)
         await message.reply(response, parse_mode="Markdown")
         return
     
-    # ===== /users =====
     if command == "/users":
         users = get_all_users()
         if not users:
             await message.reply("📭 Пока нет пользователей.")
             return
-        
         response = "👥 **Последние 10 пользователей:**\n\n"
         for i, u in enumerate(users[:10], 1):
             response += f"{i}. @{u['username']} → {u['nickname']} ({u['timestamp']})\n"
-        
         if len(users) > 10:
             response += f"\n... и еще {len(users) - 10} пользователей. Используй `/export` для полного списка."
-        
         await message.reply(response, parse_mode="Markdown")
         return
     
-    # ===== /search =====
     if command == "/search":
         if not args:
             await message.reply("❌ Введите: `/search @username` или `/search ID`", parse_mode="Markdown")
             return
-        
         query = args.strip()
         user = None
-        
         if query.isdigit():
             user = find_user_by_id(int(query))
         else:
             if query.startswith("@"):
                 query = query[1:]
             user = find_user_by_username(query)
-        
         if user:
             response = (
                 f"👤 **Найден пользователь:**\n\n"
@@ -363,12 +358,10 @@ async def admin_commands(message: Message):
             await message.reply(f"❌ Пользователь не найден.")
         return
     
-    # ===== /add =====
     if command == "/add":
         if not args:
             await message.reply("❌ Введите: `/add Ник`", parse_mode="Markdown")
             return
-        
         nickname = args.strip()
         if add_nickname(nickname):
             await message.reply(f"✅ Ник `{nickname}` добавлен!", parse_mode="Markdown")
@@ -376,12 +369,10 @@ async def admin_commands(message: Message):
             await message.reply(f"❌ Ник `{nickname}` уже существует!", parse_mode="Markdown")
         return
     
-    # ===== /delete =====
     if command == "/delete":
         if not args:
             await message.reply("❌ Введите: `/delete Ник`", parse_mode="Markdown")
             return
-        
         nickname = args.strip()
         if delete_nickname(nickname):
             await message.reply(f"✅ Ник `{nickname}` удалён!", parse_mode="Markdown")
@@ -389,7 +380,6 @@ async def admin_commands(message: Message):
             await message.reply(f"❌ Ник `{nickname}` не найден!", parse_mode="Markdown")
         return
     
-    # ===== Неизвестная команда =====
     await message.reply(f"❌ Неизвестная команда. Используйте `/help` для списка команд.", parse_mode="Markdown")
 
 # ============================================================
@@ -397,6 +387,7 @@ async def admin_commands(message: Message):
 # ============================================================
 WEBHOOK_PATH1 = "/webhook/bot1"
 WEBHOOK_PATH2 = "/webhook/bot2"
+WEBHOOK_PATH3 = "/webhook/bot3"
 
 async def on_startup(app):
     init_db()
@@ -411,14 +402,17 @@ async def on_startup(app):
     
     await bot1.set_webhook(url=f"{base_url}{WEBHOOK_PATH1}")
     await bot2.set_webhook(url=f"{base_url}{WEBHOOK_PATH2}")
+    await bot3.set_webhook(url=f"{base_url}{WEBHOOK_PATH3}")
     
     logger.info(f"Webhook bot1: {base_url}{WEBHOOK_PATH1}")
     logger.info(f"Webhook bot2: {base_url}{WEBHOOK_PATH2}")
+    logger.info(f"Webhook bot3: {base_url}{WEBHOOK_PATH3}")
     logger.info("Webhooks set!")
 
 async def on_shutdown(app):
     await bot1.delete_webhook()
     await bot2.delete_webhook()
+    await bot3.delete_webhook()
 
 async def health_check(request):
     return web.Response(text="OK", status=200)
@@ -429,11 +423,15 @@ async def webhook_bot1(request):
 async def webhook_bot2(request):
     return await SimpleRequestHandler(dispatcher=dp2, bot=bot2).handle(request)
 
+async def webhook_bot3(request):
+    return await SimpleRequestHandler(dispatcher=dp3, bot=bot3).handle(request)
+
 def main():
     app = web.Application()
     app.router.add_get("/health", health_check)
     app.router.add_post(WEBHOOK_PATH1, webhook_bot1)
     app.router.add_post(WEBHOOK_PATH2, webhook_bot2)
+    app.router.add_post(WEBHOOK_PATH3, webhook_bot3)
     
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
