@@ -114,7 +114,7 @@ async def choose_nickname(callback: CallbackQuery):
 WEBHOOK_PATH1 = "/webhook/bot1"
 WEBHOOK_PATH2 = "/webhook/bot2"
 
-async def on_startup():
+async def on_startup(app):
     if RENDER:
         base_url = os.getenv("RENDER_EXTERNAL_URL", "")
         if not base_url:
